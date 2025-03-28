@@ -127,7 +127,7 @@ class Trader:
         conversions = 0
         trader_data = ""
 
-        # TODO: Add logic
+        # TODO: Add logic   
 
         logger.flush(state, result, conversions, trader_data)
         return result, conversions, trader_data
