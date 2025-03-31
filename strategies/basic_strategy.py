@@ -1,8 +1,6 @@
-import json
 from typing import Any
-
+import json
 from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
-
 
 class Logger:
     def __init__(self) -> None:
@@ -120,12 +118,37 @@ class Logger:
 logger = Logger()
 
 class Trader:
-    def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:
-        result = {}
-        conversions = 0
-        trader_data = ""
+    def run(self, state: TradingState):
+        result = {
+            "RAINFOREST_RESIN": [],
+            "KELP": []
+        }
+        
+        product = 'RAINFOREST_RESIN'
 
-        # TODO: Add logic
+        order_depth = state.order_depths[product]
+        buy_orders = order_depth.buy_orders
+        sell_orders = order_depth.sell_orders
+        
+        logger.print("Buy Orders: ", buy_orders)
+        logger.print("Sell Orders: ", sell_orders)
+        
+        orders = []
+        midPrice = 10000
 
-        logger.flush(state, result, conversions, trader_data)
-        return result, conversions, trader_data
+        for sell_price, sell_quantity in sell_orders.items():
+            # place complementary buy order
+            if sell_price < midPrice:
+                orders.append(Order(product, sell_price, -sell_quantity))
+
+        for buy_price, buy_quantity in buy_orders.items():
+            # place complementary sell order
+            if buy_price > midPrice:
+                orders.append(Order(product, buy_price, -buy_quantity))
+        
+        result[product] = orders
+        
+        logger.print("Result: ", result)
+        
+        logger.flush(state, result, None, "")
+        return result, None, ""
