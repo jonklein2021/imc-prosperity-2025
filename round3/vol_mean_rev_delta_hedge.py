@@ -141,7 +141,7 @@ class Product:
 products = [
     Product.RESIN, Product.KELP, Product.INK, 
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10250, Product.VOUCHER_10500
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
 ]
 
 product_strings = [
@@ -542,7 +542,14 @@ class Trader:
         
         ### VOLCANIC ROCK VOUCHERS ###
         
-        p = Product.VOUCHER_10500
+        # Results:
+        # Product.VOUCHER_9500: -915
+        # Product.VOUCHER_9750: -24675
+        # Product.VOUCHER_10000: -281
+        # Product.VOUCHER_10250: 1682
+        # Product.VOUCHER_10500: 178
+        
+        p = Product.VOUCHER_9500
         strike = 9500 + 250*(p - 9)
         
         # calculate implied volatility

@@ -130,21 +130,23 @@ class Product:
     CROISSANTS = 5
     BASKET1 = 6 # = 6 CROISSANTS, 3 JAMS, 1 DJEMBES
     BASKET2 = 7 # = 4 CROISSANTS, 2 JAMS
-    VOUCHER_9500 = 8
-    VOUCHER_9750 = 9
-    VOUCHER_10250 = 10
-    VOUCHER_10500 = 11
+    VOLCANIC_ROCK = 8
+    VOUCHER_9500 = 9
+    VOUCHER_9750 = 10
+    VOUCHER_10000 = 11
+    VOUCHER_10250 = 12
+    VOUCHER_10500 = 13
     
 products = [
     Product.RESIN, Product.KELP, Product.INK, 
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10250, Product.VOUCHER_10500
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
 ]
 
 product_strings = [
     "RAINFOREST_RESIN", "KELP", "SQUID_INK",
     "DJEMBES", "JAMS", "CROISSANTS", "PICNIC_BASKET1", "PICNIC_BASKET2",
-    "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500"
+    "VOLCANIC_ROCK", "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10000", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500"
 ]
 
 class Trader:
@@ -158,8 +160,10 @@ class Trader:
             60, # Product.DJEMBES
             60, # Product.BASKET1
             100, # Product.BASKET2
+            400, # Product.VOLCANIC_ROCK
             200, # Product.VOUCHER_9500
             200, # Product.VOUCHER_9750
+            200, # Product.VOUCHER_10000
             200, # Product.VOUCHER_10250
             200, # Product.VOUCHER_10500
         ]
@@ -172,10 +176,16 @@ class Trader:
             4298, # Product.JAMS
             6593, # Product.DJEMBES
             59052, # Product.BASKET1
-            30408 # Product.BASKET2
+            30408, # Product.BASKET2
+            10332, # Product.VOLCANIC_ROCK
+            832, # Product.VOUCHER_9500
+            583, # Product.VOUCHER_9750
+            343, # Product.VOUCHER_10000
+            148, # Product.VOUCHER_10250
+            41, # Product.VOUCHER_10500
         ]
         
-        self.mp_window_size = 2
+        self.mp_window_size = 100
         self.mid_prices = [
             [], # Product.RESIN
             [], # Product.KELP
@@ -184,7 +194,13 @@ class Trader:
             [], # Product.JAMS
             [], # Product.DJEMBES
             [], # Product.BASKET1
-            [] # Product.BASKET2
+            [], # Product.BASKET2
+            [], # Product.VOLCANIC_ROCK
+            [], # Product.VOUCHER_9500
+            [], # Product.VOUCHER_9750
+            [], # Product.VOUCHER_10000
+            [], # Product.VOUCHER_10250
+            [], # Product.VOUCHER_10500
         ]
         
         # stores spread of basket1 and its components
@@ -418,8 +434,8 @@ class Trader:
         for p in product_strings:
             if p in state.order_depths:
                 mid_price = self.calculate_mid_price(state.order_depths[p].buy_orders, state.order_depths[p].sell_orders)
-                best_bid = max(state.order_depths[p].buy_orders.keys())
-                best_ask = min(state.order_depths[p].sell_orders.keys())
+                best_bid = max(state.order_depths[p].buy_orders.keys()) if state.order_depths[p].buy_orders else 0
+                best_ask = min(state.order_depths[p].sell_orders.keys()) if state.order_depths[p].sell_orders else float("inf")
             else:
                 mid_price = self.mid_prices[p][-1] if self.mid_prices[p] else self.historical_avgs[p]
                 best_bid = 0

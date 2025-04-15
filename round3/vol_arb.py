@@ -141,7 +141,7 @@ class Product:
 products = [
     Product.RESIN, Product.KELP, Product.INK, 
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10250, Product.VOUCHER_10500
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
 ]
 
 product_strings = [
@@ -257,11 +257,11 @@ class Trader:
         self.spread_history = []
         
         self.mean_vol = {
-            Product.VOUCHER_9500: 0.02654466248216915,
-            Product.VOUCHER_9750: 0.027215613345859643,
-            Product.VOUCHER_10000: 0.02472596851667414,
-            Product.VOUCHER_10250: 0.023157214330651172,
-            Product.VOUCHER_10500: 0.02363642398843999
+            Product.VOUCHER_9500: 0.03336990208786825,
+            Product.VOUCHER_9750: 0.0344296202495087,
+            Product.VOUCHER_10000: 0.03129081943938605,
+            Product.VOUCHER_10250: 0.029347176353511733,
+            Product.VOUCHER_10500: 0.03001790981783722
         }
         
         self.vol_spread_history_size = 10

@@ -141,7 +141,7 @@ class Product:
 products = [
     Product.RESIN, Product.KELP, Product.INK, 
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10250, Product.VOUCHER_10500
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
 ]
 
 product_strings = [
@@ -234,7 +234,7 @@ class Trader:
             41, # Product.VOUCHER_10500
         ]
         
-        self.mp_window_size = 10 # also affects realized volatility calculation
+        self.mp_window_size = 100 # used for SMA calculation
         self.mid_prices = [
             [], # Product.RESIN
             [], # Product.KELP
@@ -257,11 +257,11 @@ class Trader:
         self.spread_history = []
         
         self.mean_vol = {
-            Product.VOUCHER_9500: 0.02654466248216915,
-            Product.VOUCHER_9750: 0.027215613345859643,
-            Product.VOUCHER_10000: 0.02472596851667414,
-            Product.VOUCHER_10250: 0.023157214330651172,
-            Product.VOUCHER_10500: 0.02363642398843999
+            Product.VOUCHER_9500: 0.03336990208786825,
+            Product.VOUCHER_9750: 0.0344296202495087,
+            Product.VOUCHER_10000: 0.03129081943938605,
+            Product.VOUCHER_10250: 0.029347176353511733,
+            Product.VOUCHER_10500: 0.03001790981783722
         }
         
         self.prev_spot = None
@@ -414,7 +414,7 @@ class Trader:
             logger.print(f"SELL {sell_quantity} @ {ask}")
     
     # safely places orders without exceeding position limits
-    def safe_order(self, product, price, quantity, position, orders):
+    def safe_order(self, product, price, quantity, position, result):
         # buy
         if quantity > 0:
             buy_quantity = self.LIMIT[product] - (position + self.buy_order_volume)
@@ -432,8 +432,8 @@ class Trader:
             self.sell_order_volume += abs(qty)
 
         if qty != 0:
-            orders.append(Order(product_strings[product], price, qty))
-        logger.print("-- Basket 1 Arbitrage --")
+            result[product_strings[product]].append(Order(product_strings[product], price, qty))
+            logger.print(f"Order: {product_strings[product]} @ {price} x {qty}")
     
     # form of hedging to keep a neutral delta
     def gamma_scalp(self, result, old_spot, new_spot, option_pos, spot_pos, delta, gamma):
@@ -508,7 +508,28 @@ class Trader:
             if len(self.mid_prices[p]) > self.mp_window_size:
                 self.mid_prices[p].pop(0)
         
-        ### VOLCANIC ROCK VOUCHERS ###
+        ### VOLCANIC ROCK ORDERS ###
+        
+        take_width = 0.5
+        
+        # trade based on SMA
+        if len(self.mid_prices[Product.VOLCANIC_ROCK]) == self.mp_window_size:
+            sma = statistics.mean(self.mid_prices[Product.VOLCANIC_ROCK][-self.mp_window_size:])
+            fair = int(mid_prices[Product.VOLCANIC_ROCK])
+            
+            # buy signal
+            if fair >= sma + take_width:
+                order_depth = state.order_depths[product_strings[Product.VOLCANIC_ROCK]]
+                ask, ask_qty = best_asks[Product.VOLCANIC_ROCK], order_depth.sell_orders[best_asks[Product.VOLCANIC_ROCK]]
+                self.safe_order(Product.VOLCANIC_ROCK, ask, -ask_qty, positions[Product.VOLCANIC_ROCK], result)
+            
+            # sell signal
+            elif fair <= sma - take_width:
+                order_depth = state.order_depths[product_strings[Product.VOLCANIC_ROCK]]
+                bid, bid_qty = best_bids[Product.VOLCANIC_ROCK], order_depth.buy_orders[best_bids[Product.VOLCANIC_ROCK]]
+                self.safe_order(Product.VOLCANIC_ROCK, bid, -bid_qty, positions[Product.VOLCANIC_ROCK], result)
+        
+        ### GAMMA SCALP ###
         
         option = Product.VOUCHER_10250
         tte = (5/7) - (state.timestamp / 1000000 / 7)
