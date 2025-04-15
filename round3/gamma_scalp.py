@@ -234,7 +234,7 @@ class Trader:
             41, # Product.VOUCHER_10500
         ]
         
-        self.mp_window_size = 2
+        self.mp_window_size = 10 # also affects realized volatility calculation
         self.mid_prices = [
             [], # Product.RESIN
             [], # Product.KELP
@@ -257,21 +257,14 @@ class Trader:
         self.spread_history = []
         
         self.mean_vol = {
-            Product.VOUCHER_9500: 0.03336990208786825,
-            Product.VOUCHER_9750: 0.0344296202495087,
-            Product.VOUCHER_10000: 0.03129081943938605,
-            Product.VOUCHER_10250: 0.029347176353511733,
-            Product.VOUCHER_10500: 0.03001790981783722
+            Product.VOUCHER_9500: 0.02654466248216915,
+            Product.VOUCHER_9750: 0.027215613345859643,
+            Product.VOUCHER_10000: 0.02472596851667414,
+            Product.VOUCHER_10250: 0.023157214330651172,
+            Product.VOUCHER_10500: 0.02363642398843999
         }
         
-        self.vol_history_size = 25
-        self.vol_history = {
-            product_strings[Product.VOUCHER_9500]: [],
-            product_strings[Product.VOUCHER_9750]: [],
-            product_strings[Product.VOUCHER_10000]: [],
-            product_strings[Product.VOUCHER_10250]: [],
-            product_strings[Product.VOUCHER_10500]: [],
-        }
+        self.prev_spot = None
         
         self.buy_order_volume = 0
         self.sell_order_volume = 0
@@ -320,24 +313,29 @@ class Trader:
         
         return vwap
 
+    # realized volatility calculation
     def calculate_volatility(self, prices):
-        if len(prices) < 2:
-            return 0.0
-        
-        mean_price = sum(prices) / len(prices)
-        variance = sum((price - mean_price) ** 2 for price in prices) / (len(prices) - 1)
-        
-        return math.math.sqrt(variance)
+        n = len(prices)
+        if n < 2:
+            return 0.0  # Not enough data to calculate volatility
 
-    # gamma is the risk aversion coefficient; < 0.1 for less volatile, > 0.5 for more volatile
-    def calculate_rpf(self, product, mid_price, position, gamma, timestamp):
-        time_left = 1000000 - (timestamp % 1000000) # T-t
-        variance = statistics.variance(self.mid_prices[product]) if len(self.mid_prices[product]) >= 2 else 0 # variance
-        
-        rpf = mid_price - position*gamma*variance*time_left
-        logger.print(f"rpf: {rpf}")
-        
-        return rpf
+        squared_returns = []
+
+        for t in range(1, n):
+            # Check if P(t-1) is 0 and skip that price pair if true
+            if prices[t-1] == 0 or prices[t] == 0:
+                continue
+
+            # Calculate log return for each pair of consecutive prices
+            log_return = math.log(prices[t] / prices[t-1])
+            squared_returns.append(log_return**2)
+
+        # Calculate the average squared return and take the square root to get volatility
+        if squared_returns:
+            volatility = math.sqrt(sum(squared_returns) / (n-1))
+            return volatility
+        else:
+            return 0.0  # If no valid prices to compute volatility
 
     # takes the best orders from the order depth and places them in the orders list
     # if the order is within the limits and the price is better than the fair price
@@ -437,68 +435,38 @@ class Trader:
             orders.append(Order(product_strings[product], price, qty))
         logger.print("-- Basket 1 Arbitrage --")
     
-    def voucher_orders(self, z_score_threshold, product: Product, result, voucher_order_depth, position, implied_vol):
-        key = product_strings[product]
-        self.vol_history[key].append(implied_vol)
+    # form of hedging to keep a neutral delta
+    def gamma_scalp(self, result, old_spot, new_spot, option_pos, spot_pos, delta, gamma):
+        # calculate how many units of the underlying asset are needed to stay delta-neutral
+        required_delta_hedge = -delta * spot_pos
+        delta_hedge_qty = required_delta_hedge - option_pos
+        logger.print(f"Delta Hedge Quantity: {delta_hedge_qty}")
         
-        if len(self.vol_history[key]) < self.vol_history_size:
-            return
-        elif len(self.vol_history[key]) > self.vol_history_size:
-            self.vol_history[key].pop(0)
-        
-        vol_z_score = (implied_vol - self.mean_vol[product]) / np.std(self.vol_history[key])
-        
-        if vol_z_score >= z_score_threshold and position != self.LIMIT[product]:            
-            target_position = -self.LIMIT[product]
-            if len(voucher_order_depth.buy_orders) > 0:
-                best_bid = max(voucher_order_depth.buy_orders.keys())
-                target_quantity = abs(target_position - position)
-                quantity = min(target_quantity, abs(voucher_order_depth.buy_orders[best_bid]))
-                quote_quantity = target_quantity - quantity
-                if quote_quantity == 0:
-                    result[key].append(Order(key, best_bid, -quantity)) # take
-                else:
-                    result[key].append(Order(key, best_bid, -quantity)) # take
-                    result[key].append(Order(key, best_bid, -quote_quantity)) # make
-        elif vol_z_score <= -z_score_threshold and position != -self.LIMIT[product]:
-            target_position = self.LIMIT[product]
-            if len(voucher_order_depth.sell_orders) > 0:
-                best_ask = min(voucher_order_depth.sell_orders.keys())
-                target_quantity = abs(target_position - position)
-                quantity = min(target_quantity, abs(voucher_order_depth.sell_orders[best_ask]))
-                quote_quantity = target_quantity - quantity
-                if quote_quantity == 0:
-                    result[key].append(Order(key, best_ask, quantity)) # take
-                else:
-                    result[key].append(Order(key, best_ask, quantity)) # take
-                    result[key].append(Order(key, best_ask, quote_quantity)) # make
+        # Gamma adjustment (how much delta will change if spot moves)
+        gamma_adjustment = gamma * (new_spot - old_spot)
 
-    def volcano_delta_hedge(self, voucher: Product, result, volcano_order_depth, volcano_position, voucher_position, delta):
-        if result[product_strings[voucher]] == None or len(result[product_strings[voucher]]) == 0:
-            future_voucher_position = voucher_position
-        else:
-            future_voucher_position = voucher_position + sum(order.quantity for order in result[product_strings[voucher]])
+        # Adjust the position based on the gamma adjustment (to be delta-neutral)
+        if gamma_adjustment != 0:
+            # Calculate the new spot position that accounts for the change in Gamma
+            delta_hedge_qty += gamma_adjustment
         
-        target_volcano_position = -delta * future_voucher_position
+        if delta_hedge_qty > 0:
+            max_buy = self.LIMIT[Product.VOLCANIC_ROCK] - (spot_pos + self.buy_order_volume)
+            buy_qty = min(round(delta_hedge_qty), max_buy)
+            if buy_qty > 0:
+                logger.print(f"Buy {delta_hedge_qty} volcanic rock @ {new_spot}")
+                result[product_strings[Product.VOLCANIC_ROCK]].append(Order(product_strings[Product.VOLCANIC_ROCK], new_spot, buy_qty))
+                self.buy_order_volume += delta_hedge_qty
+        elif delta_hedge_qty < 0:
+            max_sell = self.LIMIT[Product.VOLCANIC_ROCK] + (spot_pos - self.sell_order_volume)
+            sell_qty = min(abs(round(delta_hedge_qty)), max_sell)
+            if sell_qty > 0:
+                logger.print(f"Sell {abs(delta_hedge_qty)} volcanic rock @ {new_spot}")
+                result[product_strings[Product.VOLCANIC_ROCK]].append(Order(product_strings[Product.VOLCANIC_ROCK], new_spot, -sell_qty))
+                self.sell_order_volume += abs(delta_hedge_qty)
         
-        if target_volcano_position == volcano_position:
-            return
+        self.prev_spot = new_spot # update for next iteration
         
-        target_volcano_quantity = target_volcano_position - volcano_position
-        key = product_strings[Product.VOLCANIC_ROCK]
-        
-        if target_volcano_quantity > 0: # buy underlying asset
-            best_ask = min(volcano_order_depth.sell_orders.keys())
-            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] - volcano_position)
-            if quantity > 0:
-                result[key].append(Order(key, best_ask, round(quantity)))
-        
-        elif target_volcano_quantity < 0: # sell underlying asset
-            best_bid = max(volcano_order_depth.buy_orders.keys())
-            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] + volcano_position)
-            if quantity > 0:
-                result[key].append(Order(key, best_bid, -round(quantity)))
-    
     def run(self, state: TradingState):
         conversions = None
         result = { p: [] for p in product_strings }
@@ -511,7 +479,7 @@ class Trader:
             trader_data = jsonpickle.decode(state.traderData)
             self.mid_prices = trader_data["mid_prices"]
             self.spread_history = trader_data["spread_history"]
-            self.vol_history = trader_data["vol_history"]
+            self.prev_spot = trader_data["prev_spot"]
         
         mid_prices = []
         best_bids = []
@@ -542,22 +510,30 @@ class Trader:
         
         ### VOLCANIC ROCK VOUCHERS ###
         
-        p = Product.VOUCHER_10500
-        strike = 9500 + 250*(p - 9)
+        option = Product.VOUCHER_10250
+        tte = (5/7) - (state.timestamp / 1000000 / 7)
+        spot = mid_prices[Product.VOLCANIC_ROCK]
+        strike = 9500 + (250 * (option - Product.VOUCHER_9500))
         
-        # calculate implied volatility
-        tte = (5/7) - (state.timestamp / 1000000 / 7) # (7 - 2) days until expiry because this is round 3 = 1 + 2
-        implied_vol = BlackScholes.implied_volatility(mid_prices[p], mid_prices[Product.VOLCANIC_ROCK], strike, tte)
-        delta = BlackScholes.delta(mid_prices[Product.VOLCANIC_ROCK], strike, tte, implied_vol)
+        # calculate IV
+        iv = BlackScholes.implied_volatility(mid_prices[option], spot, strike, tte)
         
-        self.voucher_orders(2.5, p, result, state.order_depths.get(product_strings[Product.VOLCANIC_ROCK]), positions[Product.VOLCANIC_ROCK], implied_vol)
-        self.volcano_delta_hedge(p, result, state.order_depths.get(product_strings[Product.VOLCANIC_ROCK]), positions[Product.VOLCANIC_ROCK], positions[p], delta)
+        # calculate delta
+        delta = BlackScholes.delta(spot, strike, tte, iv)
+        logger.print(f"Delta: {delta}")
+        
+        # calculate gamma
+        gamma = BlackScholes.gamma(spot, strike, tte, iv)
+        logger.print(f"Gamma: {gamma}")
+        
+        if self.prev_spot:
+            self.gamma_scalp(result, self.prev_spot, spot, positions[option], positions[Product.VOLCANIC_ROCK], delta, gamma)
         
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
             "spread_history": self.spread_history,
-            "vol_history": self.vol_history
+            "prev_spot": self.prev_spot
         })
         
         logger.flush(state, result, conversions, trader_data)

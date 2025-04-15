@@ -212,6 +212,7 @@ class Trader:
             400, # Product.VOLCANIC_ROCK
             200, # Product.VOUCHER_9500
             200, # Product.VOUCHER_9750
+            200, # Product.VOUCHER_10000
             200, # Product.VOUCHER_10250
             200, # Product.VOUCHER_10500
         ]
@@ -233,7 +234,7 @@ class Trader:
             41, # Product.VOUCHER_10500
         ]
         
-        self.mp_window_size = 2
+        self.mp_window_size = 10 # also affects realized volatility calculation
         self.mid_prices = [
             [], # Product.RESIN
             [], # Product.KELP
@@ -322,9 +323,25 @@ class Trader:
     def calculate_volatility(self, prices):
         n = len(prices)
         if n < 2:
-            return 0.0
-        
-        return math.sqrt(sum(math.log(prices[t] / prices[t+1])**2 for t in n) / n+1)
+            return 0.0  # Not enough data to calculate volatility
+
+        squared_returns = []
+
+        for t in range(1, n):
+            # Check if P(t-1) is 0 and skip that price pair if true
+            if prices[t-1] == 0 or prices[t] == 0:
+                continue
+
+            # Calculate log return for each pair of consecutive prices
+            log_return = math.log(prices[t] / prices[t-1])
+            squared_returns.append(log_return**2)
+
+        # Calculate the average squared return and take the square root to get volatility
+        if squared_returns:
+            volatility = math.sqrt(sum(squared_returns) / (n-1))
+            return volatility
+        else:
+            return 0.0  # If no valid prices to compute volatility
 
     # takes the best orders from the order depth and places them in the orders list
     # if the order is within the limits and the price is better than the fair price
@@ -517,7 +534,7 @@ class Trader:
             trader_data = jsonpickle.decode(state.traderData)
             self.mid_prices = trader_data["mid_prices"]
             self.spread_history = trader_data["spread_history"]
-            self.vol_history = trader_data["vol_history"]
+            self.vol_spread_history = trader_data["vol_spread_history"]
         
         mid_prices = []
         best_bids = []
@@ -548,13 +565,14 @@ class Trader:
         
         ### VOLCANIC ROCK VOUCHER ###
         
-        self.vol_spread_arb(0.01, Product.VOUCHER_10000, result, state.order_depths[product_strings[Product.VOUCHER_10000]], state.order_depths[product_strings[Product.VOLCANIC_ROCK]], mid_prices, positions[Product.VOLCANIC_ROCK], positions[Product.VOUCHER_10000], state.timestamp)
+        p = Product.VOUCHER_10500
+        self.vol_spread_arb(0.005, p, result, state.order_depths[product_strings[p]], state.order_depths[product_strings[Product.VOLCANIC_ROCK]], mid_prices, positions[Product.VOLCANIC_ROCK], positions[p], state.timestamp)
         
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
             "spread_history": self.spread_history,
-            "vol_history": self.vol_history
+            "vol_spread_history": self.vol_spread_history
         })
         
         logger.flush(state, result, conversions, trader_data)
