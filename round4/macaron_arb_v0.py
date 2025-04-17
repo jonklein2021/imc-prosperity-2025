@@ -383,6 +383,48 @@ class Trader:
         if qty != 0:
             orders.append(Order(product_strings[product], price, qty))
     
+    def basket_arb(self, threshold, mid_prices, best_bids, best_asks, positions, result):
+        logger.print("-- Basket 1 Arbitrage --")
+        # compute price of synthetic basket
+        synthetic_basket1_price = 6 * mid_prices[Product.CROISSANTS] + 3 * mid_prices[Product.JAMS] + mid_prices[Product.DJEMBES]
+        
+        # compute spread
+        spread = mid_prices[Product.BASKET1] - synthetic_basket1_price
+        
+        # log spread in history
+        self.spread_history.append(spread)
+        if len(self.spread_history) < self.spread_history_size:
+            return # not enough data to compute stddev
+        elif len(self.spread_history) > self.spread_history_size:
+            self.spread_history.pop(0)
+        
+        # compute stddev and z-score
+        z_score = (spread - 48.762433333333334) / np.std(self.spread_history)
+        
+        logger.print(f"Basket1 Price: {mid_prices[Product.BASKET1]}, Synthetic Basket1 Price: {synthetic_basket1_price}, Spread: {spread}")
+        
+        target_position = self.LIMIT[Product.BASKET1] - 2
+        
+        # +spread -> basket1 is overpriced
+        if z_score >= threshold and positions[Product.BASKET1] != -target_position:
+            # sell basket1 at bid
+            self.safe_order(Product.BASKET1, best_bids[Product.BASKET1], -1, positions[Product.BASKET1], result[product_strings[Product.BASKET1]])
+            
+            # buy components at ask
+            self.safe_order(Product.CROISSANTS, best_asks[Product.CROISSANTS], 6, positions[Product.CROISSANTS], result[product_strings[Product.CROISSANTS]])
+            self.safe_order(Product.JAMS, best_asks[Product.JAMS], 3, positions[Product.JAMS], result[product_strings[Product.JAMS]])
+            self.safe_order(Product.DJEMBES, best_asks[Product.DJEMBES], 1, positions[Product.DJEMBES], result[product_strings[Product.DJEMBES]])
+        
+        # -spread -> basket1 is underpriced
+        if z_score <= -threshold and positions[Product.BASKET1] != target_position:
+            # buy basket1 at ask
+            self.safe_order(Product.BASKET1, best_asks[Product.BASKET1], 1, positions[Product.BASKET1], result[product_strings[Product.BASKET1]])
+            
+            # sell components at bid
+            self.safe_order(Product.CROISSANTS, best_bids[Product.CROISSANTS], -6, positions[Product.CROISSANTS], result[product_strings[Product.CROISSANTS]])
+            self.safe_order(Product.JAMS, best_bids[Product.JAMS], -3, positions[Product.JAMS], result[product_strings[Product.JAMS]])
+            self.safe_order(Product.DJEMBES, best_bids[Product.DJEMBES], -1, positions[Product.DJEMBES], result[product_strings[Product.DJEMBES]])
+    
     # returns bid, ask
     def get_macaron_bid_ask(self, observation: ConversionObservation):
         storage_cost = 0.1
@@ -464,13 +506,13 @@ class Trader:
         positions = []
         
         # initialize mid_prices, bids, asks, and positions for convenience
-        for p in product_strings:
+        for p_i, p in enumerate(product_strings):
             if p in state.order_depths:
                 mid_price = self.calculate_mid_price(state.order_depths[p].buy_orders, state.order_depths[p].sell_orders)
                 best_bid = max(state.order_depths[p].buy_orders.keys()) if state.order_depths[p].buy_orders else 0
                 best_ask = min(state.order_depths[p].sell_orders.keys()) if state.order_depths[p].sell_orders else float("inf")
             else:
-                mid_price = self.mid_prices[p][-1] if self.mid_prices[p] else self.historical_avgs[p]
+                mid_price = self.mid_prices[p_i][-1] if self.mid_prices[p_i] else self.historical_avgs[p_i]
                 best_bid = 0
                 best_ask = float("inf")
             
@@ -480,10 +522,52 @@ class Trader:
             positions.append(state.position.get(p, 0))
         
         # update mid_prices for next iteration
-        for p in products:
-            self.mid_prices[p].append(mid_prices[p])
-            if len(self.mid_prices[p]) > self.mp_window_size:
-                self.mid_prices[p].pop(0)
+        for p_i in products:
+            self.mid_prices[p_i].append(mid_prices[p_i])
+            if len(self.mid_prices[p_i]) > self.mp_window_size:
+                self.mid_prices[p_i].pop(0)
+        
+        ### RAINFOREST_RESIN ###
+        if product_strings[Product.RESIN] in state.order_depths:
+            # calculate fair price
+            fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.RESIN]].buy_orders, state.order_depths[product_strings[Product.RESIN]].sell_orders)
+            
+            # take best orders
+            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 0, positions[Product.RESIN])
+            
+            # clear position
+            self.clear_position_order(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
+            
+            # market make
+            self.market_make(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
+        
+        ### KELP ###
+        if product_strings[Product.KELP] in state.order_depths:
+            # calculate fair price
+            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.KELP]].buy_orders, state.order_depths[product_strings[Product.KELP]].sell_orders)
+            
+            # clear position
+            self.clear_position_order(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
+            
+            # market make
+            self.market_make(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
+        
+        ### SQUID INK ###
+        if product_strings[Product.INK] in state.order_depths:
+            # calculate fair price
+            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.INK]].buy_orders, state.order_depths[product_strings[Product.INK]].sell_orders)
+            
+            # clear position
+            self.clear_position_order(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
+            
+            # market make
+            self.market_make(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
+        
+        ### BASKET 1 ARBITRAGE ###
+        if product_strings[Product.BASKET1] in state.order_depths:
+            self.basket_arb(2.25, mid_prices, best_bids, best_asks, positions, result)
+        
+        ### TODO: ADD OPTION TRADING HERE ###
         
         ### MACARON ARB ###
         self.macaron_arb_take(
