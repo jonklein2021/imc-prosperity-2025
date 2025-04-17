@@ -59,6 +59,9 @@ plt.plot(df['timestamp'], df['mid_price'], label='Mid Price')
 # plot SMA
 plt.plot(df['timestamp'], df['mid_price'].rolling(window=500).mean(), label='SMA (500)')
 
+# print average mid price
+print(f"Average mid price: {df['mid_price'].mean()}")
+
 plt.legend()
 plt.xlabel('Timestamp')
 plt.ylabel('Mid Price')

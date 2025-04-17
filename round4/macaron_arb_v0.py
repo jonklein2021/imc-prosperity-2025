@@ -4,7 +4,7 @@ import jsonpickle
 import math
 import statistics
 import numpy as np
-from datamodel import Listing, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
+from datamodel import Listing, ConversionObservation, Observation, Order, OrderDepth, ProsperityEncoder, Symbol, Trade, TradingState
 
 class Logger:
     def __init__(self) -> None:
@@ -136,17 +136,27 @@ class Product:
     VOUCHER_10000 = 11
     VOUCHER_10250 = 12
     VOUCHER_10500 = 13
+    MACARON = 14
     
 products = [
-    Product.RESIN, Product.KELP, Product.INK, 
+    # round 1
+    Product.RESIN, Product.KELP, Product.INK,
+    
+    # round 2
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
+    
+    # round 3
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500,
+    
+    # round 4
+    Product.MACARON
 ]
 
 product_strings = [
     "RAINFOREST_RESIN", "KELP", "SQUID_INK",
     "DJEMBES", "JAMS", "CROISSANTS", "PICNIC_BASKET1", "PICNIC_BASKET2",
-    "VOLCANIC_ROCK", "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10000", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500"
+    "VOLCANIC_ROCK", "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10000", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500",
+    "MAGNIFICENT_MACARONS"
 ]
 
 class Trader:
@@ -166,6 +176,7 @@ class Trader:
             200, # Product.VOUCHER_10000
             200, # Product.VOUCHER_10250
             200, # Product.VOUCHER_10500
+            75, # Product.MACARON
         ]
         
         self.historical_avgs = [
@@ -183,6 +194,7 @@ class Trader:
             343, # Product.VOUCHER_10000
             148, # Product.VOUCHER_10250
             41, # Product.VOUCHER_10500
+            664, # Product.MACARON
         ]
         
         self.mp_window_size = 100
@@ -201,6 +213,7 @@ class Trader:
             [], # Product.VOUCHER_10000
             [], # Product.VOUCHER_10250
             [], # Product.VOUCHER_10500
+            [], # Product.MACARON
         ]
         
         # stores spread of basket1 and its components
@@ -370,48 +383,68 @@ class Trader:
         if qty != 0:
             orders.append(Order(product_strings[product], price, qty))
     
-    def basket_arb(self, threshold, mid_prices, best_bids, best_asks, positions, result):
-        logger.print("-- Basket 1 Arbitrage --")
-        # compute price of synthetic basket
-        synthetic_basket1_price = 6 * mid_prices[Product.CROISSANTS] + 3 * mid_prices[Product.JAMS] + mid_prices[Product.DJEMBES]
-        
-        # compute spread
-        spread = mid_prices[Product.BASKET1] - synthetic_basket1_price
-        
-        # log spread in history
-        self.spread_history.append(spread)
-        if len(self.spread_history) < self.spread_history_size:
-            return # not enough data to compute stddev
-        elif len(self.spread_history) > self.spread_history_size:
-            self.spread_history.pop(0)
-        
-        # compute stddev and z-score
-        z_score = (spread - 48.762433333333334) / np.std(self.spread_history)
-        
-        logger.print(f"Basket1 Price: {mid_prices[Product.BASKET1]}, Synthetic Basket1 Price: {synthetic_basket1_price}, Spread: {spread}")
-        
-        target_position = self.LIMIT[Product.BASKET1] - 2
-        
-        # +spread -> basket1 is overpriced
-        if z_score >= threshold and positions[Product.BASKET1] != -target_position:
-            # sell basket1 at bid
-            self.safe_order(Product.BASKET1, best_bids[Product.BASKET1], -1, positions[Product.BASKET1], result[product_strings[Product.BASKET1]])
-            
-            # buy components at ask
-            self.safe_order(Product.CROISSANTS, best_asks[Product.CROISSANTS], 6, positions[Product.CROISSANTS], result[product_strings[Product.CROISSANTS]])
-            self.safe_order(Product.JAMS, best_asks[Product.JAMS], 3, positions[Product.JAMS], result[product_strings[Product.JAMS]])
-            self.safe_order(Product.DJEMBES, best_asks[Product.DJEMBES], 1, positions[Product.DJEMBES], result[product_strings[Product.DJEMBES]])
-        
-        # -spread -> basket1 is underpriced
-        if z_score <= -threshold and positions[Product.BASKET1] != target_position:
-            # buy basket1 at ask
-            self.safe_order(Product.BASKET1, best_asks[Product.BASKET1], 1, positions[Product.BASKET1], result[product_strings[Product.BASKET1]])
-            
-            # sell components at bid
-            self.safe_order(Product.CROISSANTS, best_bids[Product.CROISSANTS], -6, positions[Product.CROISSANTS], result[product_strings[Product.CROISSANTS]])
-            self.safe_order(Product.JAMS, best_bids[Product.JAMS], -3, positions[Product.JAMS], result[product_strings[Product.JAMS]])
-            self.safe_order(Product.DJEMBES, best_bids[Product.DJEMBES], -1, positions[Product.DJEMBES], result[product_strings[Product.DJEMBES]])
+    # returns bid, ask
+    def get_macaron_bid_ask(self, observation: ConversionObservation):
+        storage_cost = 0.1
+        bid = observation.bidPrice - (observation.exportTariff + observation.transportFees + storage_cost)
+        ask = observation.askPrice + observation.importTariff + observation.transportFees + storage_cost
+        return bid, ask
     
+    def macaron_arb_take(self, result, order_depth: OrderDepth, observation: ConversionObservation, edge: float, position: int):
+        logger.print('-- MACARON ARB TAKE --')
+        
+        implied_bid, implied_ask = self.get_macaron_bid_ask(observation)
+        logger.print(f"Implied Bid: {implied_bid}, Implied Ask: {implied_ask}")
+        
+        buy_quantity = self.LIMIT[Product.MACARON] - position
+        sell_quantity = self.LIMIT[Product.MACARON] + position
+
+        for price in sorted(list(order_depth.sell_orders.keys())):
+            if price > implied_bid - edge:
+                break
+            
+            if price < implied_bid - edge:
+                # max amount to buy
+                quantity = min(abs(order_depth.sell_orders[price]), buy_quantity)
+                if quantity > 0:
+                    result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], price, quantity))
+                    logger.print(f"BUY {quantity} @ {price}")
+                    self.buy_order_volume += quantity
+
+        for price in sorted(list(order_depth.buy_orders.keys()), reverse=True):
+            if price < implied_ask + edge:
+                break
+
+            if price > implied_ask + edge:
+                # max amount to sell
+                quantity = min(abs(order_depth.buy_orders[price]), sell_quantity)
+                if quantity > 0:
+                    result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], price, -quantity))
+                    logger.print(f"SELL {quantity} @ {price}")
+                    self.sell_order_volume += quantity
+
+    def macaron_arb_make(self, result, order_depth: OrderDepth, observation: ConversionObservation, edge: float, position: int):
+        logger.print('-- MACARON ARB MAKE --')
+        
+        implied_bid, implied_ask = self.get_macaron_bid_ask(observation)
+        logger.print(f"Implied Bid: {implied_bid}, Implied Ask: {implied_ask}")
+        
+        bid = implied_bid - edge
+        ask = implied_ask + edge
+        
+        best_bid = max(order_depth.buy_orders.keys()) if order_depth.buy_orders else 0
+        
+        buy_quantity = min(self.LIMIT[Product.MACARON] - (position + self.buy_order_volume), self.LIMIT[Product.MACARON])
+        if buy_quantity > 0:
+            if ask > best_bid:
+                result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], best_bid, buy_quantity))  # Buy order
+            else:
+                result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], round(bid), buy_quantity))  # Buy order
+
+        sell_quantity = self.LIMIT[Product.MACARON] + (position - self.sell_order_volume)
+        if sell_quantity > 0:
+            result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], round(ask), -sell_quantity))  # Sell order
+        
     def run(self, state: TradingState):
         conversions = None
         result = { p: [] for p in product_strings }
@@ -452,47 +485,23 @@ class Trader:
             if len(self.mid_prices[p]) > self.mp_window_size:
                 self.mid_prices[p].pop(0)
         
+        ### MACARON ARB ###
+        self.macaron_arb_take(
+            result,
+            state.order_depths[product_strings[Product.MACARON]],
+            state.observations.conversionObservations[product_strings[Product.MACARON]],
+            1,
+            positions[Product.MACARON]
+        )
         
-        ### RAINFOREST_RESIN ###
-        if product_strings[Product.RESIN] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.RESIN]].buy_orders, state.order_depths[product_strings[Product.RESIN]].sell_orders)
-            
-            # take best orders
-            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 0, positions[Product.RESIN])
-            
-            # clear position
-            self.clear_position_order(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
-            
-            # market make
-            self.market_make(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
-        
-        ### KELP ###
-        if product_strings[Product.KELP] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.KELP]].buy_orders, state.order_depths[product_strings[Product.KELP]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-            
-            # market make
-            self.market_make(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-        
-        ### SQUID INK ###
-        if product_strings[Product.INK] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.INK]].buy_orders, state.order_depths[product_strings[Product.INK]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-            
-            # market make
-            self.market_make(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-        
-        ### BASKET 1 ARBITRAGE ###
-        if product_strings[Product.BASKET1] in state.order_depths:
-            self.basket_arb(2.25, mid_prices, best_bids, best_asks, positions, result)
-        
+        self.macaron_arb_make(
+            result,
+            state.order_depths[product_strings[Product.MACARON]],
+            state.observations.conversionObservations[product_strings[Product.MACARON]],
+            1,
+            positions[Product.MACARON]
+        )
+                
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,

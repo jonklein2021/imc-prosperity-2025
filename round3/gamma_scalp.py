@@ -510,21 +510,22 @@ class Trader:
         
         ### VOLCANIC ROCK ORDERS ###
         
-        take_width = 0.5
+        threshold = 1
         
         # trade based on SMA
         if len(self.mid_prices[Product.VOLCANIC_ROCK]) == self.mp_window_size:
             sma = statistics.mean(self.mid_prices[Product.VOLCANIC_ROCK][-self.mp_window_size:])
             fair = int(mid_prices[Product.VOLCANIC_ROCK])
+            spread = sma - fair
             
             # buy signal
-            if fair >= sma + take_width:
+            if spread <= -threshold:
                 order_depth = state.order_depths[product_strings[Product.VOLCANIC_ROCK]]
                 ask, ask_qty = best_asks[Product.VOLCANIC_ROCK], order_depth.sell_orders[best_asks[Product.VOLCANIC_ROCK]]
                 self.safe_order(Product.VOLCANIC_ROCK, ask, -ask_qty, positions[Product.VOLCANIC_ROCK], result)
             
             # sell signal
-            elif fair <= sma - take_width:
+            elif spread >= threshold:
                 order_depth = state.order_depths[product_strings[Product.VOLCANIC_ROCK]]
                 bid, bid_qty = best_bids[Product.VOLCANIC_ROCK], order_depth.buy_orders[best_bids[Product.VOLCANIC_ROCK]]
                 self.safe_order(Product.VOLCANIC_ROCK, bid, -bid_qty, positions[Product.VOLCANIC_ROCK], result)

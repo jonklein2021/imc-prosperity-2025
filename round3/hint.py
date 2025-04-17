@@ -253,7 +253,7 @@ class Trader:
         ]
         
         # stores spread of basket1 and its components
-        self.spread_history_size = 50
+        self.spread_history_size = 0
         self.spread_history = []
         
         self.mean_vol = {
@@ -264,14 +264,23 @@ class Trader:
             Product.VOUCHER_10500: 0.03001790981783722
         }
         
-        self.vol_history_size = 25
-        self.vol_history = {
-            product_strings[Product.VOUCHER_9500]: [],
-            product_strings[Product.VOUCHER_9750]: [],
-            product_strings[Product.VOUCHER_10000]: [],
-            product_strings[Product.VOUCHER_10250]: [],
-            product_strings[Product.VOUCHER_10500]: [],
+        self.parabolas = {
+            Product.VOUCHER_9500: [0.00042769, -0.00258184, 0.03692129],
+            Product.VOUCHER_9750: [0.00014304, -0.00036579, 0.03335499],
+            Product.VOUCHER_10000: [3.97464607e-05, -2.49355363e-04, 3.14655950e-02],
+            Product.VOUCHER_10250: [4.91265253e-05, -7.66743285e-05, 2.74558237e-02],
+            Product.VOUCHER_10500: [2.78538060e-05, 3.97421286e-04, 2.38293126e-02]
         }
+        
+        self.base_iv = {
+            Product.VOUCHER_9500: np.polyval(self.parabolas[Product.VOUCHER_9500], 0),
+            Product.VOUCHER_9750: np.polyval(self.parabolas[Product.VOUCHER_9750], 0),
+            Product.VOUCHER_10000: np.polyval(self.parabolas[Product.VOUCHER_10000], 0),
+            Product.VOUCHER_10250: np.polyval(self.parabolas[Product.VOUCHER_10250], 0),
+            Product.VOUCHER_10500: np.polyval(self.parabolas[Product.VOUCHER_10500], 0)
+        }
+        
+        self.prev_spot = None
         
         self.buy_order_volume = 0
         self.sell_order_volume = 0
@@ -286,7 +295,7 @@ class Trader:
         
         # calculate mid price
         mid_price = (best_bid + best_ask) / 2
-        logger.print(f"Best Bid: {best_bid}, Best Ask: {best_ask}, Mid Price: {mid_price}")
+        # logger.print(f"Best Bid: {best_bid}, Best Ask: {best_ask}, Mid Price: {mid_price}")
         
         return mid_price        
     
@@ -320,50 +329,55 @@ class Trader:
         
         return vwap
 
+    # realized volatility calculation
     def calculate_volatility(self, prices):
-        if len(prices) < 2:
-            return 0.0
-        
-        mean_price = sum(prices) / len(prices)
-        variance = sum((price - mean_price) ** 2 for price in prices) / (len(prices) - 1)
-        
-        return math.math.sqrt(variance)
+        n = len(prices)
+        if n < 2:
+            return 0.0  # Not enough data to calculate volatility
 
-    # gamma is the risk aversion coefficient; < 0.1 for less volatile, > 0.5 for more volatile
-    def calculate_rpf(self, product, mid_price, position, gamma, timestamp):
-        time_left = 1000000 - (timestamp % 1000000) # T-t
-        variance = statistics.variance(self.mid_prices[product]) if len(self.mid_prices[product]) >= 2 else 0 # variance
-        
-        rpf = mid_price - position*gamma*variance*time_left
-        logger.print(f"rpf: {rpf}")
-        
-        return rpf
+        squared_returns = []
+
+        for t in range(1, n):
+            # Check if P(t-1) is 0 and skip that price pair if true
+            if prices[t-1] == 0 or prices[t] == 0:
+                continue
+
+            # Calculate log return for each pair of consecutive prices
+            log_return = math.log(prices[t] / prices[t-1])
+            squared_returns.append(log_return**2)
+
+        # Calculate the average squared return and take the square root to get volatility
+        if squared_returns:
+            volatility = math.sqrt(sum(squared_returns) / (n-1))
+            return volatility
+        else:
+            return 0.0  # If no valid prices to compute volatility
 
     # takes the best orders from the order depth and places them in the orders list
     # if the order is within the limits and the price is better than the fair price
     def take_best_orders(self, product, orders, order_depth, fair_price, width, position):
-            logger.print("-- Taking best orders --")
+        logger.print("-- Taking best orders --")
+        
+        if len(order_depth.sell_orders) != 0:
+            best_ask = min(order_depth.sell_orders.keys())
+            best_ask_amount = -order_depth.sell_orders[best_ask]
             
-            if len(order_depth.sell_orders) != 0:
-                best_ask = min(order_depth.sell_orders.keys())
-                best_ask_amount = -order_depth.sell_orders[best_ask]
-                
-                if best_ask <= fair_price - width:
-                    quantity = min(best_ask_amount, self.LIMIT[product] - position) # max amount to buy 
-                    if quantity > 0:
-                        orders.append(Order(product_strings[product], best_ask, quantity)) 
-                        logger.print(f"BUY {quantity} @ {best_ask}")
-                        self.buy_order_volume += quantity
+            if best_ask <= fair_price - width:
+                quantity = min(best_ask_amount, self.LIMIT[product] - position) # max amount to buy 
+                if quantity > 0:
+                    orders.append(Order(product_strings[product], best_ask, quantity)) 
+                    logger.print(f"BUY {quantity} @ {best_ask}")
+                    self.buy_order_volume += quantity
 
-            if len(order_depth.buy_orders) != 0:
-                best_bid = max(order_depth.buy_orders.keys())
-                best_bid_amount = order_depth.buy_orders[best_bid]
-                if best_bid >= fair_price + width:
-                    quantity = min(best_bid_amount, self.LIMIT[product] + position) # max we can sell 
-                    if quantity > 0:
-                        orders.append(Order(product_strings[product], best_bid, -quantity))
-                        logger.print(f"SELL {quantity} @ {best_bid}")
-                        self.sell_order_volume += quantity
+        if len(order_depth.buy_orders) != 0:
+            best_bid = max(order_depth.buy_orders.keys())
+            best_bid_amount = order_depth.buy_orders[best_bid]
+            if best_bid >= fair_price + width:
+                quantity = min(best_bid_amount, self.LIMIT[product] + position) # max we can sell 
+                if quantity > 0:
+                    orders.append(Order(product_strings[product], best_bid, -quantity))
+                    logger.print(f"SELL {quantity} @ {best_bid}")
+                    self.sell_order_volume += quantity
     
     # a risk management function that neutralizes or reduces the current position 
     def clear_position_order(self, product, orders, order_depth, fair_value, position):
@@ -416,7 +430,7 @@ class Trader:
             logger.print(f"SELL {sell_quantity} @ {ask}")
     
     # safely places orders without exceeding position limits
-    def safe_order(self, product, price, quantity, position, orders):
+    def safe_order(self, product, price, quantity, position, result):
         # buy
         if quantity > 0:
             buy_quantity = self.LIMIT[product] - (position + self.buy_order_volume)
@@ -434,71 +448,67 @@ class Trader:
             self.sell_order_volume += abs(qty)
 
         if qty != 0:
-            orders.append(Order(product_strings[product], price, qty))
-        logger.print("-- Basket 1 Arbitrage --")
+            result[product_strings[product]].append(Order(product_strings[product], price, qty))
+            logger.print(f"Order: {product_strings[product]} @ {price} x {qty}")
     
-    def voucher_orders(self, z_score_threshold, product: Product, result, voucher_order_depth, position, implied_vol):
-        key = product_strings[product]
-        self.vol_history[key].append(implied_vol)
-        
-        if len(self.vol_history[key]) < self.vol_history_size:
-            return
-        elif len(self.vol_history[key]) > self.vol_history_size:
-            self.vol_history[key].pop(0)
-        
-        vol_z_score = (implied_vol - self.mean_vol[product]) / np.std(self.vol_history[key])
-        
-        if vol_z_score >= z_score_threshold and position != self.LIMIT[product]:            
-            target_position = -self.LIMIT[product]
-            if len(voucher_order_depth.buy_orders) > 0:
-                best_bid = max(voucher_order_depth.buy_orders.keys())
-                target_quantity = abs(target_position - position)
-                quantity = min(target_quantity, abs(voucher_order_depth.buy_orders[best_bid]))
-                quote_quantity = target_quantity - quantity
-                if quote_quantity == 0:
-                    result[key].append(Order(key, best_bid, -quantity)) # take
-                else:
-                    result[key].append(Order(key, best_bid, -quantity)) # take
-                    result[key].append(Order(key, best_bid, -quote_quantity)) # make
-        elif vol_z_score <= -z_score_threshold and position != -self.LIMIT[product]:
-            target_position = self.LIMIT[product]
-            if len(voucher_order_depth.sell_orders) > 0:
-                best_ask = min(voucher_order_depth.sell_orders.keys())
-                target_quantity = abs(target_position - position)
-                quantity = min(target_quantity, abs(voucher_order_depth.sell_orders[best_ask]))
-                quote_quantity = target_quantity - quantity
-                if quote_quantity == 0:
-                    result[key].append(Order(key, best_ask, quantity)) # take
-                else:
-                    result[key].append(Order(key, best_ask, quantity)) # take
-                    result[key].append(Order(key, best_ask, quote_quantity)) # make
-
-    def volcano_delta_hedge(self, voucher: Product, result, volcano_order_depth, volcano_position, voucher_position, delta):
+    def delta_hedge(self, voucher: Product, result, rock_order_depth, rock_pos, voucher_pos, delta):
         if result[product_strings[voucher]] == None or len(result[product_strings[voucher]]) == 0:
-            future_voucher_position = voucher_position
+            future_voucher_pos = voucher_pos
         else:
-            future_voucher_position = voucher_position + sum(order.quantity for order in result[product_strings[voucher]])
+            future_voucher_pos = voucher_pos + sum(order.quantity for order in result[product_strings[voucher]])
         
-        target_volcano_position = -delta * future_voucher_position
+        target_rock_pos = -delta * future_voucher_pos
         
-        if target_volcano_position == volcano_position:
+        if target_rock_pos == rock_pos:
             return
         
-        target_volcano_quantity = target_volcano_position - volcano_position
+        target_volcano_quantity = target_rock_pos - rock_pos
         key = product_strings[Product.VOLCANIC_ROCK]
         
         if target_volcano_quantity > 0: # buy underlying asset
-            best_ask = min(volcano_order_depth.sell_orders.keys())
-            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] - volcano_position)
+            best_ask = min(rock_order_depth.sell_orders.keys())
+            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] - rock_pos)
             if quantity > 0:
                 result[key].append(Order(key, best_ask, round(quantity)))
         
         elif target_volcano_quantity < 0: # sell underlying asset
-            best_bid = max(volcano_order_depth.buy_orders.keys())
-            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] + volcano_position)
+            best_bid = max(rock_order_depth.buy_orders.keys())
+            quantity = min(abs(target_volcano_quantity), self.LIMIT[Product.VOLCANIC_ROCK] + rock_pos)
             if quantity > 0:
                 result[key].append(Order(key, best_bid, -round(quantity)))
     
+    # form of hedging to keep a neutral delta
+    def gamma_scalp(self, result, old_spot, new_spot, option_pos, spot_pos, delta, gamma):
+        # calculate how many units of the underlying asset are needed to stay delta-neutral
+        required_delta_hedge = -delta * spot_pos
+        delta_hedge_qty = required_delta_hedge - option_pos
+        logger.print(f"Delta Hedge Quantity: {delta_hedge_qty}")
+        
+        # Gamma adjustment (how much delta will change if spot moves)
+        gamma_adjustment = gamma * (new_spot - old_spot)
+
+        # Adjust the position based on the gamma adjustment (to be delta-neutral)
+        if gamma_adjustment != 0:
+            # Calculate the new spot position that accounts for the change in Gamma
+            delta_hedge_qty += gamma_adjustment
+        
+        if delta_hedge_qty > 0:
+            max_buy = self.LIMIT[Product.VOLCANIC_ROCK] - (spot_pos + self.buy_order_volume)
+            buy_qty = min(round(delta_hedge_qty), max_buy)
+            if buy_qty > 0:
+                logger.print(f"Buy {delta_hedge_qty} volcanic rock @ {new_spot}")
+                result[product_strings[Product.VOLCANIC_ROCK]].append(Order(product_strings[Product.VOLCANIC_ROCK], new_spot, buy_qty))
+                self.buy_order_volume += delta_hedge_qty
+        elif delta_hedge_qty < 0:
+            max_sell = self.LIMIT[Product.VOLCANIC_ROCK] + (spot_pos - self.sell_order_volume)
+            sell_qty = min(abs(round(delta_hedge_qty)), max_sell)
+            if sell_qty > 0:
+                logger.print(f"Sell {abs(delta_hedge_qty)} volcanic rock @ {new_spot}")
+                result[product_strings[Product.VOLCANIC_ROCK]].append(Order(product_strings[Product.VOLCANIC_ROCK], new_spot, -sell_qty))
+                self.sell_order_volume += abs(delta_hedge_qty)
+        
+        self.prev_spot = new_spot # update for next iteration
+        
     def run(self, state: TradingState):
         conversions = None
         result = { p: [] for p in product_strings }
@@ -511,7 +521,7 @@ class Trader:
             trader_data = jsonpickle.decode(state.traderData)
             self.mid_prices = trader_data["mid_prices"]
             self.spread_history = trader_data["spread_history"]
-            self.vol_history = trader_data["vol_history"]
+            self.prev_spot = trader_data["prev_spot"]
         
         mid_prices = []
         best_bids = []
@@ -519,52 +529,86 @@ class Trader:
         positions = []
         
         # initialize mid_prices, bids, asks, and positions for convenience
-        for option in product_strings:
-            if option in state.order_depths:
-                mid_price = self.calculate_mid_price(state.order_depths[option].buy_orders, state.order_depths[option].sell_orders)
-                best_bid = max(state.order_depths[option].buy_orders.keys()) if state.order_depths[option].buy_orders else 0
-                best_ask = min(state.order_depths[option].sell_orders.keys()) if state.order_depths[option].sell_orders else float("inf")
+        for i, p in enumerate(product_strings):
+            if p in state.order_depths:
+                mid_price = self.calculate_mid_price(state.order_depths[p].buy_orders, state.order_depths[p].sell_orders)
+                best_bid = max(state.order_depths[p].buy_orders.keys()) if state.order_depths[p].buy_orders else 0
+                best_ask = min(state.order_depths[p].sell_orders.keys()) if state.order_depths[p].sell_orders else float("inf")
             else:
-                mid_price = self.mid_prices[option][-1] if self.mid_prices[option] else self.historical_avgs[option]
+                mid_price = self.mid_prices[i][-1] if self.mid_prices[i] else self.historical_avgs[i]
                 best_bid = 0
                 best_ask = float("inf")
+            
+            if mid_price == 0:
+                mid_price = self.historical_avgs[i]
             
             mid_prices.append(mid_price)
             best_bids.append(best_bid)
             best_asks.append(best_ask)
-            positions.append(state.position.get(option, 0))
+            positions.append(state.position.get(p, 0))
         
         # update mid_prices for next iteration
-        for option in products:
-            self.mid_prices[option].append(mid_prices[option])
-            if len(self.mid_prices[option]) > self.mp_window_size:
-                self.mid_prices[option].pop(0)
+        for p_i in products:
+            self.mid_prices[p_i].append(mid_prices[p_i])
+            if len(self.mid_prices[p_i]) > self.mp_window_size:
+                self.mid_prices[p_i].pop(0)
         
-        ### VOLCANIC ROCK VOUCHERS ###
+        ### VOLCANIC ROCK VOUCHERS ORDERS ###
         
-        # Results:
-        # Product.VOUCHER_9500: -915
-        # Product.VOUCHER_9750: -24675
-        # Product.VOUCHER_10000: -281
-        # Product.VOUCHER_10250: 1682
-        # Product.VOUCHER_10500: 178
+        option = Product.VOUCHER_10250
+        tte = (5/7) - (state.timestamp / 1000000 / 7)
+        # tte = (8 - round) - (state.timestamp/1000000) / 365
+        spot = mid_prices[Product.VOLCANIC_ROCK]
+        strike = 9500 + (250 * (option - Product.VOUCHER_9500))
         
-        option = Product.VOUCHER_10500
-        strike = 9500 + 250*(option - 9)
+        # calculate IV
+        iv = BlackScholes.implied_volatility(mid_prices[option], spot, strike, tte)
         
-        # calculate implied volatility
-        tte = (5/7) - (state.timestamp / 1000000 / 7) # (7 - 2) days until expiry because this is round 3 = 1 + 2
-        implied_vol = BlackScholes.implied_volatility(mid_prices[option], mid_prices[Product.VOLCANIC_ROCK], strike, tte)
-        delta = BlackScholes.delta(mid_prices[Product.VOLCANIC_ROCK], strike, tte, implied_vol)
+        # calculate delta
+        delta = BlackScholes.delta(spot, strike, tte, iv)
+        logger.print(f"Delta: {delta}")
         
-        self.voucher_orders(3, option, result, state.order_depths.get(product_strings[option]), positions[option], implied_vol)
-        self.volcano_delta_hedge(option, result, state.order_depths.get(product_strings[Product.VOLCANIC_ROCK]), positions[Product.VOLCANIC_ROCK], positions[option], delta)
+        # calculate gamma
+        gamma = BlackScholes.gamma(spot, strike, tte, iv)
+        logger.print(f"Gamma: {gamma}")
+        
+        # calculate m_t = log(strike / option_price)/ sqrt(tte)
+        m_t = math.log(strike / mid_prices[option]) / math.sqrt(tte)
+        
+        # calculate v_t
+        v_t = iv
+        
+        # get expected v_t for this m_t
+        expected_v_t = np.polyval(self.parabolas[option], m_t)
+        v_spread = expected_v_t - v_t
+        logger.print(f"Expected v_t: {expected_v_t}")
+        logger.print(f"Current v_t: {v_t}")
+        logger.print(f"v_spread: {v_spread}")
+        
+        str_option = product_strings[option]
+        
+        threshold = 0.001
+        
+        # long the voucher
+        if v_spread >= threshold and str_option in state.order_depths and state.order_depths[str_option].sell_orders:
+            best_ask = min(state.order_depths[str_option].sell_orders.keys())
+            best_ask_amount = state.order_depths[str_option].sell_orders[best_ask]
+            self.safe_order(option, best_ask, -best_ask_amount, positions[option], result)
+            
+        # short the voucher
+        elif v_spread <= -threshold and str_option in state.order_depths and state.order_depths[str_option].buy_orders:
+            best_bid = max(state.order_depths[str_option].buy_orders.keys())
+            best_bid_amount = state.order_depths[str_option].buy_orders[best_bid]
+            self.safe_order(option, best_bid, -best_bid_amount, positions[option], result)
+            
+        ### DELTA HEDGE ###
+        # self.delta_hedge(option, result, state.order_depths[product_strings[Product.VOLCANIC_ROCK]], positions[Product.VOLCANIC_ROCK], positions[option], delta)
         
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
             "spread_history": self.spread_history,
-            "vol_history": self.vol_history
+            "prev_spot": self.prev_spot
         })
         
         logger.flush(state, result, conversions, trader_data)

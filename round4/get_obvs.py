@@ -120,7 +120,7 @@ class Logger:
 
 logger = Logger()
 
-# THIS SHIT DO NOT WORK !!!
+# THIS SHIT DO NOT WORK ON JASPER'S BACKTESTER !!!
 
 class Trader:
     def run(self, state: TradingState) -> tuple[dict[Symbol, list[Order]], int, str]:

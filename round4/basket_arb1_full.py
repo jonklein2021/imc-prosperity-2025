@@ -136,17 +136,27 @@ class Product:
     VOUCHER_10000 = 11
     VOUCHER_10250 = 12
     VOUCHER_10500 = 13
+    MACARON = 14
     
 products = [
-    Product.RESIN, Product.KELP, Product.INK, 
+    # round 1
+    Product.RESIN, Product.KELP, Product.INK,
+    
+    # round 2
     Product.DJEMBES, Product.JAMS, Product.CROISSANTS, Product.BASKET1, Product.BASKET2,
-    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500
+    
+    # round 3
+    Product.VOLCANIC_ROCK, Product.VOUCHER_9500, Product.VOUCHER_9750, Product.VOUCHER_10000, Product.VOUCHER_10250, Product.VOUCHER_10500,
+    
+    # round 4
+    Product.MACARON
 ]
 
 product_strings = [
     "RAINFOREST_RESIN", "KELP", "SQUID_INK",
     "DJEMBES", "JAMS", "CROISSANTS", "PICNIC_BASKET1", "PICNIC_BASKET2",
-    "VOLCANIC_ROCK", "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10000", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500"
+    "VOLCANIC_ROCK", "VOLCANIC_ROCK_VOUCHER_9500", "VOLCANIC_ROCK_VOUCHER_9750", "VOLCANIC_ROCK_VOUCHER_10000", "VOLCANIC_ROCK_VOUCHER_10250", "VOLCANIC_ROCK_VOUCHER_10500",
+    "MAGNIFICENT_MACARONS"
 ]
 
 class Trader:
@@ -166,6 +176,7 @@ class Trader:
             200, # Product.VOUCHER_10000
             200, # Product.VOUCHER_10250
             200, # Product.VOUCHER_10500
+            70, # Product.MACARON
         ]
         
         self.historical_avgs = [
@@ -183,6 +194,7 @@ class Trader:
             343, # Product.VOUCHER_10000
             148, # Product.VOUCHER_10250
             41, # Product.VOUCHER_10500
+            664, # Product.MACARON
         ]
         
         self.mp_window_size = 100
@@ -201,6 +213,7 @@ class Trader:
             [], # Product.VOUCHER_10000
             [], # Product.VOUCHER_10250
             [], # Product.VOUCHER_10500
+            [], # Product.MACARON
         ]
         
         # stores spread of basket1 and its components
