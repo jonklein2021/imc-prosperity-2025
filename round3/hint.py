@@ -555,14 +555,15 @@ class Trader:
         
         ### VOLCANIC ROCK VOUCHERS ORDERS ###
         
-        option = Product.VOUCHER_10250
-        tte = (5/7) - (state.timestamp / 1000000 / 7)
-        # tte = (8 - round) - (state.timestamp/1000000) / 365
+        option = Product.VOUCHER_10500
+        round = 4
+        tte = ((8 - round) / 7) - (state.timestamp / 1000000 / 7)
         spot = mid_prices[Product.VOLCANIC_ROCK]
+        option_price = mid_prices[option]
         strike = 9500 + (250 * (option - Product.VOUCHER_9500))
         
         # calculate IV
-        iv = BlackScholes.implied_volatility(mid_prices[option], spot, strike, tte)
+        iv = BlackScholes.implied_volatility(option_price, spot, strike, tte)
         
         # calculate delta
         delta = BlackScholes.delta(spot, strike, tte, iv)
@@ -573,21 +574,22 @@ class Trader:
         logger.print(f"Gamma: {gamma}")
         
         # calculate m_t = log(strike / option_price)/ sqrt(tte)
-        m_t = math.log(strike / mid_prices[option]) / math.sqrt(tte)
+        m_t = math.log(strike / option_price) / math.sqrt(tte)
         
         # calculate v_t
         v_t = iv
         
         # get expected v_t for this m_t
         expected_v_t = np.polyval(self.parabolas[option], m_t)
-        v_spread = expected_v_t - v_t
+        base_v_t = self.base_iv[option]
+        v_spread = base_v_t - v_t
         logger.print(f"Expected v_t: {expected_v_t}")
+        logger.print(f"Base v_t: {base_v_t}")
         logger.print(f"Current v_t: {v_t}")
         logger.print(f"v_spread: {v_spread}")
         
+        threshold = 0.0
         str_option = product_strings[option]
-        
-        threshold = 0.001
         
         # long the voucher
         if v_spread >= threshold and str_option in state.order_depths and state.order_depths[str_option].sell_orders:

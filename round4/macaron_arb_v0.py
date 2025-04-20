@@ -197,7 +197,7 @@ class Trader:
             664, # Product.MACARON
         ]
         
-        self.mp_window_size = 100
+        self.mp_window_size = 2
         self.mid_prices = [
             [], # Product.RESIN
             [], # Product.KELP
@@ -233,7 +233,6 @@ class Trader:
         
         # calculate mid price
         mid_price = (best_bid + best_ask) / 2
-        logger.print(f"Best Bid: {best_bid}, Best Ask: {best_ask}, Mid Price: {mid_price}")
         
         return mid_price        
     
@@ -263,7 +262,6 @@ class Trader:
             return 0
         
         vwap = total_value / total_volume
-        logger.print(f"VWAP: {vwap}")
         
         return vwap
 
@@ -432,6 +430,9 @@ class Trader:
         ask = observation.askPrice + observation.importTariff + observation.transportFees + storage_cost
         return bid, ask
     
+    def macaron_arb_clear_pos(self, position):
+        return -position
+    
     def macaron_arb_take(self, result, order_depth: OrderDepth, observation: ConversionObservation, edge: float, position: int):
         logger.print('-- MACARON ARB TAKE --')
         
@@ -570,11 +571,18 @@ class Trader:
         ### TODO: ADD OPTION TRADING HERE ###
         
         ### MACARON ARB ###
+        
+        conversions = self.macaron_arb_clear_pos(positions[Product.MACARON])
+        
+        positions[Product.MACARON] = 0
+    
+        edge = 10
+        
         self.macaron_arb_take(
             result,
             state.order_depths[product_strings[Product.MACARON]],
             state.observations.conversionObservations[product_strings[Product.MACARON]],
-            1,
+            edge,
             positions[Product.MACARON]
         )
         
@@ -582,16 +590,16 @@ class Trader:
             result,
             state.order_depths[product_strings[Product.MACARON]],
             state.observations.conversionObservations[product_strings[Product.MACARON]],
-            1,
+            edge,
             positions[Product.MACARON]
         )
-                
+        
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
             "spread_history": self.spread_history,
         })
-        
+
         logger.flush(state, result, conversions, trader_data)
         
         return result, conversions, trader_data
