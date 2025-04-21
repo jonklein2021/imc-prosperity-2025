@@ -220,6 +220,8 @@ class Trader:
         self.spread_history = []
         self.spread_history_size = 50
         
+        self.ema = None
+        
         self.buy_order_volume = 0
         self.sell_order_volume = 0
     
@@ -499,7 +501,7 @@ class Trader:
         if state.traderData:
             trader_data = jsonpickle.decode(state.traderData)
             self.mid_prices = trader_data["mid_prices"]
-            self.spread_history = trader_data["spread_history"]
+            self.ema = trader_data["ema"]
         
         mid_prices = []
         best_bids = []
@@ -527,57 +529,49 @@ class Trader:
             self.mid_prices[p_i].append(mid_prices[p_i])
             if len(self.mid_prices[p_i]) > self.mp_window_size:
                 self.mid_prices[p_i].pop(0)
-        """
-        ### RAINFOREST_RESIN ###
-        if product_strings[Product.RESIN] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.RESIN]].buy_orders, state.order_depths[product_strings[Product.RESIN]].sell_orders)
-            
-            # take best orders
-            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 0, positions[Product.RESIN])
-            
-            # clear position
-            self.clear_position_order(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
-            
-            # market make
-            self.market_make(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
         
-        ### KELP ###
-        if product_strings[Product.KELP] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.KELP]].buy_orders, state.order_depths[product_strings[Product.KELP]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-            
-            # market make
-            self.market_make(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-        
-        ### SQUID INK ###
-        if product_strings[Product.INK] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.INK]].buy_orders, state.order_depths[product_strings[Product.INK]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-            
-            # market make
-            self.market_make(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-        
-        ### BASKET 1 ARBITRAGE ###
-        if product_strings[Product.BASKET1] in state.order_depths:
-            self.basket_arb(2.25, mid_prices, best_bids, best_asks, positions, result)
-        """
-        ### TODO: ADD OPTION TRADING HERE ###
-        
-        ### MACARON ARB ###
+        ### MACARON EMA ###
         
         conversions = self.macaron_arb_clear_pos(positions[Product.MACARON])
         
         positions[Product.MACARON] = 0
     
         edge = 0
+        alpha = 0.1
         
+        fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.MACARON]].buy_orders, state.order_depths[product_strings[Product.MACARON]].sell_orders)
+        
+        # calculate EMA
+        if self.ema:
+            self.ema = alpha * fair_price + (1 - alpha) * self.ema
+        else:
+            self.ema = fair_price
+            
+        logger.print(f"EMA: {self.ema}")
+        
+        # trade around the EMA
+        if fair_price < self.ema:
+            logger.print(f"[Buy signal] Mid-Price: {fair_price}")
+            # find sell orders that are profitable to buy
+            for ask, ask_quantity in state.order_depths[product_strings[Product.MACARON]].sell_orders.items():
+                logger.print(f"Ask: {ask}, Ask Quantity: {ask_quantity}")
+                # ensure good entry price
+                if ask < fair_price:
+                    logger.print(f"BUY {-ask_quantity} @ {ask}")
+                    result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], ask, -ask_quantity))
+
+        # price above EMA → Sell signal
+        elif fair_price > self.ema:
+            logger.print(f"[Sell signal] Mid-Price: {fair_price}")
+            # find buy orders that are profitable to sell
+            for bid, bid_quantity in state.order_depths[product_strings[Product.MACARON]].buy_orders.items():
+                logger.print(f"Bid: {bid}, Bid Quantity: {bid_quantity}")
+                # ensure profitable exit
+                if bid > fair_price:
+                    logger.print(f"SELL {-bid_quantity} @ {bid}")
+                    result[product_strings[Product.MACARON]].append(Order(product_strings[Product.MACARON], bid, -bid_quantity))
+        
+        """
         self.macaron_arb_take(
             result,
             state.order_depths[product_strings[Product.MACARON]],
@@ -593,11 +587,12 @@ class Trader:
             edge,
             positions[Product.MACARON]
         )
+        """
         
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
-            "spread_history": self.spread_history,
+            "ema": self.ema
         })
 
         logger.flush(state, result, conversions, trader_data)

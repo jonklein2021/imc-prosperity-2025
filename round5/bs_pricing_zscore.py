@@ -121,6 +121,54 @@ class Logger:
 
 logger = Logger()
 
+class BlackScholes:
+    @staticmethod
+    def black_scholes_call(spot, strike, time_to_expiry, volatility):
+        d1 = (math.log(spot) - math.log(strike) + (0.5 * volatility * volatility) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+        d2 = d1 - volatility * math.sqrt(time_to_expiry)
+        call_price = spot * statistics.NormalDist().cdf(d1) - strike * statistics.NormalDist().cdf(d2)
+        return call_price
+
+    @staticmethod
+    def black_scholes_put(spot, strike, time_to_expiry, volatility):
+        d1 = (math.log(spot / strike) + (0.5 * volatility * volatility) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+        d2 = d1 - volatility * math.sqrt(time_to_expiry)
+        put_price = strike * statistics.NormalDist().cdf(-d2) - spot * statistics.NormalDist().cdf(-d1)
+        return put_price
+
+    @staticmethod
+    def delta(spot, strike, time_to_expiry, volatility):
+        d1 = (math.log(spot) - math.log(strike) + (0.5 * volatility * volatility) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+        return statistics.NormalDist().cdf(d1)
+
+    @staticmethod
+    def gamma(spot, strike, time_to_expiry, volatility):
+        d1 = (math.log(spot) - math.log(strike) + (0.5 * volatility * volatility) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+        return statistics.NormalDist().pdf(d1) / (spot * volatility * math.sqrt(time_to_expiry))
+
+    @staticmethod
+    def vega(spot, strike, time_to_expiry, volatility):
+        d1 = (math.log(spot) - math.log(strike) + (0.5 * volatility * volatility) * time_to_expiry) / (volatility * math.sqrt(time_to_expiry))
+        return statistics.NormalDist().pdf(d1) * (spot * math.sqrt(time_to_expiry)) / 100
+
+    @staticmethod
+    def implied_volatility(call_price, spot, strike, time_to_expiry, max_iterations=200, tolerance=1e-10):
+        low_vol = 0.01
+        high_vol = 1.0
+        volatility = (low_vol + high_vol) / 2.0  # Initial guess as the midpoint
+        # binary search ts
+        for _ in range(max_iterations):
+            estimated_price = BlackScholes.black_scholes_call(spot, strike, time_to_expiry, volatility)
+            diff = estimated_price - call_price
+            if abs(diff) < tolerance:
+                break
+            elif diff > 0:
+                high_vol = volatility
+            else:
+                low_vol = volatility
+            volatility = (low_vol + high_vol) / 2.0
+        return volatility
+
 class Product:
     RESIN = 0
     KELP = 1
@@ -220,6 +268,24 @@ class Trader:
         self.spread_history = []
         self.spread_history_size = 50
         
+        # store spread of options
+        self.option_spread_history = {
+            'VOLCANIC_ROCK_VOUCHER_9500': [],
+            'VOLCANIC_ROCK_VOUCHER_9750': [],
+            'VOLCANIC_ROCK_VOUCHER_10000': [],
+            'VOLCANIC_ROCK_VOUCHER_10250': [],
+            'VOLCANIC_ROCK_VOUCHER_10500': []
+        }
+        self.option_spread_history_size = 50
+        
+        self.option_spread_means = {
+            Product.VOUCHER_9500: -0.007616528715159741,
+            Product.VOUCHER_9750: 0.00024144919130100485,
+            Product.VOUCHER_10000: 0.0038512838011738647,
+            Product.VOUCHER_10250: 0.002831169571447253,
+            Product.VOUCHER_10500: 0.000569217926167293
+        }
+        
         self.buy_order_volume = 0
         self.sell_order_volume = 0
     
@@ -242,7 +308,6 @@ class Trader:
         
         # take midpoint of buy and sell averages
         fair_price = (avg_buy + avg_sell) / 2
-        logger.print(f"Avg Buy: {avg_buy}, Avg Sell: {avg_sell}, Fair Price: {fair_price}")
         
         return fair_price
     
@@ -280,7 +345,6 @@ class Trader:
         variance = statistics.variance(self.mid_prices[product]) if len(self.mid_prices[product]) >= 2 else 0 # variance
         
         rpf = mid_price - position*gamma*variance*time_left
-        logger.print(f"rpf: {rpf}")
         
         return rpf
 
@@ -496,30 +560,31 @@ class Trader:
         self.sell_order_volume = 0
         
         # load trader data
-        if state.traderData:
+        if len(state.traderData) > 0:
             trader_data = jsonpickle.decode(state.traderData)
             self.mid_prices = trader_data["mid_prices"]
             self.spread_history = trader_data["spread_history"]
+            self.option_spread_history = trader_data["option_spread_history"]
         
         mid_prices = []
-        best_bids = []
-        best_asks = []
+        # best_bids = []
+        # best_asks = []
         positions = []
         
         # initialize mid_prices, bids, asks, and positions for convenience
         for p_i, p in enumerate(product_strings):
-            if p in state.order_depths:
+            if p in state.order_depths and state.order_depths[p].buy_orders and state.order_depths[p].sell_orders:
                 mid_price = self.calculate_mid_price(state.order_depths[p].buy_orders, state.order_depths[p].sell_orders)
-                best_bid = max(state.order_depths[p].buy_orders.keys()) if state.order_depths[p].buy_orders else 0
-                best_ask = min(state.order_depths[p].sell_orders.keys()) if state.order_depths[p].sell_orders else float("inf")
+                # best_bid = max(state.order_depths[p].buy_orders.keys()) if state.order_depths[p].buy_orders else 0
+                # best_ask = min(state.order_depths[p].sell_orders.keys()) if state.order_depths[p].sell_orders else float("inf")
             else:
                 mid_price = self.mid_prices[p_i][-1] if self.mid_prices[p_i] else self.historical_avgs[p_i]
-                best_bid = 0
-                best_ask = float("inf")
+                # best_bid = 0
+                # best_ask = float("inf")
             
             mid_prices.append(mid_price)
-            best_bids.append(best_bid)
-            best_asks.append(best_ask)
+            # best_bids.append(best_bid)
+            # best_asks.append(best_ask)
             positions.append(state.position.get(p, 0))
         
         # update mid_prices for next iteration
@@ -527,77 +592,54 @@ class Trader:
             self.mid_prices[p_i].append(mid_prices[p_i])
             if len(self.mid_prices[p_i]) > self.mp_window_size:
                 self.mid_prices[p_i].pop(0)
-        """
-        ### RAINFOREST_RESIN ###
-        if product_strings[Product.RESIN] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.RESIN]].buy_orders, state.order_depths[product_strings[Product.RESIN]].sell_orders)
-            
-            # take best orders
-            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 0, positions[Product.RESIN])
-            
-            # clear position
-            self.clear_position_order(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
-            
-            # market make
-            self.market_make(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
         
-        ### KELP ###
-        if product_strings[Product.KELP] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.KELP]].buy_orders, state.order_depths[product_strings[Product.KELP]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-            
-            # market make
-            self.market_make(Product.KELP, result[product_strings[Product.KELP]], state.order_depths[product_strings[Product.KELP]], fair_price, positions[Product.KELP])
-        
-        ### SQUID INK ###
-        if product_strings[Product.INK] in state.order_depths:
-            # calculate fair price
-            fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.INK]].buy_orders, state.order_depths[product_strings[Product.INK]].sell_orders)
-            
-            # clear position
-            self.clear_position_order(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-            
-            # market make
-            self.market_make(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-        
-        ### BASKET 1 ARBITRAGE ###
-        if product_strings[Product.BASKET1] in state.order_depths:
-            self.basket_arb(2.25, mid_prices, best_bids, best_asks, positions, result)
-        """
         ### TODO: ADD OPTION TRADING HERE ###
         
-        ### MACARON ARB ###
+        option = Product.VOUCHER_9500
+        option_str = product_strings[option]
+        order_depth = state.order_depths[option_str]
         
-        conversions = self.macaron_arb_clear_pos(positions[Product.MACARON])
+        round_number = 5
+        call_price = round(mid_prices[option])
+        strike = 9500 + 250*(option - Product.VOUCHER_9500)
+        spot = round(mid_prices[Product.VOLCANIC_ROCK])
+        tte = ((8 - round_number) / 7) - (state.timestamp / 1000000 / 7)
         
-        positions[Product.MACARON] = 0
-    
-        edge = 0
+        iv = BlackScholes.implied_volatility(call_price, spot, strike, tte)
+        fair = round(BlackScholes.black_scholes_call(spot, strike, tte, iv))
+        logger.print(f"Option: {option_str}, Strike: {strike}, Spot: {spot}, TTE: {tte}, IV: {iv}")
+        logger.print(f"Fair Price: {fair}, Call Price: {call_price}")
         
-        self.macaron_arb_take(
-            result,
-            state.order_depths[product_strings[Product.MACARON]],
-            state.observations.conversionObservations[product_strings[Product.MACARON]],
-            edge,
-            positions[Product.MACARON]
-        )
+        # trade around fair price
+        spread = fair - mid_prices[option]
+        self.option_spread_history[option_str].append(spread)
+        if len(self.option_spread_history[option_str]) > self.option_spread_history_size:
+            self.option_spread_history[option_str].pop(0)
         
-        self.macaron_arb_make(
-            result,
-            state.order_depths[product_strings[Product.MACARON]],
-            state.observations.conversionObservations[product_strings[Product.MACARON]],
-            edge,
-            positions[Product.MACARON]
-        )
-        
+        if option_str in state.order_depths and len(self.option_spread_history[option_str]) == self.option_spread_history_size:
+            z_score = (spread - self.option_spread_means[option]) / np.std(self.option_spread_history[option_str]) if len(self.option_spread_history[option_str]) > 1 else 0
+            logger.print(f"Spread: {spread}, Z-Score: {z_score}")
+            
+            threshold = 0 # number of standard deviations needed to trigger a trade
+            # buy signal
+            if z_score > threshold and order_depth.sell_orders:
+                best_ask = min(order_depth.sell_orders.keys())
+                best_ask_qty = order_depth.sell_orders[best_ask]
+                
+                self.safe_order(option, best_ask, -best_ask_qty, positions[option], result[option_str])
+            
+            # sell signal
+            elif z_score < -threshold and order_depth.buy_orders:
+                best_bid = max(order_depth.buy_orders.keys())
+                best_bid_qty = order_depth.buy_orders[best_bid]
+                
+                self.safe_order(option, best_bid, -best_bid_qty, positions[option], result[option_str])
+
         # update trader data
         trader_data = jsonpickle.encode({
             "mid_prices": self.mid_prices,
             "spread_history": self.spread_history,
+            "option_spread_history": self.option_spread_history
         })
 
         logger.flush(state, result, conversions, trader_data)
