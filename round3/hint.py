@@ -557,7 +557,7 @@ class Trader:
         
         option = Product.VOUCHER_10500
         round = 4
-        tte = ((8 - round) / 7) - (state.timestamp / 1000000 / 7)
+        tte = (8 - round) - (state.timestamp / 1000000) / 252
         spot = mid_prices[Product.VOLCANIC_ROCK]
         option_price = mid_prices[option]
         strike = 9500 + (250 * (option - Product.VOUCHER_9500))
@@ -574,7 +574,7 @@ class Trader:
         logger.print(f"Gamma: {gamma}")
         
         # calculate m_t = log(strike / option_price)/ sqrt(tte)
-        m_t = math.log(strike / option_price) / math.sqrt(tte)
+        m_t = math.log(strike / spot) / math.sqrt(tte)
         
         # calculate v_t
         v_t = iv
