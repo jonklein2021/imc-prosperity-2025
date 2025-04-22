@@ -225,7 +225,7 @@ class Trader:
     
     def calculate_mid_price(self, buy_orders, sell_orders):
         if not buy_orders or not sell_orders:
-            return 0.0
+            return 0
         
         # get best bid and ask prices
         best_bid = max(buy_orders.keys())
@@ -248,7 +248,7 @@ class Trader:
     
     def calculate_popular_price(self, buy_orders, sell_orders):
         if not buy_orders and not sell_orders:
-            return 0.0
+            return 0
         
         buy_orders = sorted(buy_orders.items(), reverse=True)
         sell_orders = sorted(sell_orders.items())
@@ -540,21 +540,21 @@ class Trader:
             self.mid_prices[p_i].append(mid_prices[p_i])
             if len(self.mid_prices[p_i]) > self.mp_window_size:
                 self.mid_prices[p_i].pop(0)
-        """
+        
         ### RAINFOREST_RESIN ###
         if product_strings[Product.RESIN] in state.order_depths:
             # calculate fair price
-            fair_price = self.calculate_fair_price(state.order_depths[product_strings[Product.RESIN]].buy_orders, state.order_depths[product_strings[Product.RESIN]].sell_orders)
+            fair_price = 10000
             
             # take best orders
-            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 0, positions[Product.RESIN])
+            self.take_best_orders(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, 2, positions[Product.RESIN])
             
             # clear position
             self.clear_position_order(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
             
             # market make
             self.market_make(Product.RESIN, result[product_strings[Product.RESIN]], state.order_depths[product_strings[Product.RESIN]], fair_price, positions[Product.RESIN])
-        """
+        
         ### KELP ###
         if product_strings[Product.KELP] in state.order_depths:
             # calculate fair price
@@ -574,12 +574,15 @@ class Trader:
             # calculate fair price
             fair_price = self.calculate_vwap_price(state.order_depths[product_strings[Product.INK]].buy_orders, state.order_depths[product_strings[Product.INK]].sell_orders)
             
+            # take best orders
+            self.take_best_orders(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, 0, positions[Product.INK])
+            
             # clear position
             self.clear_position_order(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
             
             # market make
             self.market_make(Product.INK, result[product_strings[Product.INK]], state.order_depths[product_strings[Product.INK]], fair_price, positions[Product.INK])
-        
+        """
         ### BASKET 1 ARBITRAGE ###
         if product_strings[Product.BASKET1] in state.order_depths:
             self.basket_arb(2.25, mid_prices, best_bids, best_asks, positions, result)
@@ -587,7 +590,7 @@ class Trader:
         ### TODO: ADD OPTION TRADING HERE ###
         
         ### MACARON ARB ###
-        
+        """
         conversions = self.macaron_arb_clear_pos(positions[Product.MACARON])
         
         positions[Product.MACARON] = 0
